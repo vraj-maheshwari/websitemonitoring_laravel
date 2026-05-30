@@ -44,7 +44,7 @@
     $categoryConfig = [
         'cors'          => ['title' => 'CORS Configuration',          'description' => 'Checks whether cross-origin access is restricted safely.',                                          'max' => 15],
         'csp'           => ['title' => 'Content Security Policy',     'description' => 'Checks whether Content Security Policy is present and avoids unsafe script rules.',                 'max' => 20],
-        'headers'       => ['title' => 'HTTP Security Headers',       'description' => 'Checks whether important browser security headers are present and valid.',                          'max' => 30],
+        'headers'       => ['title' => 'Browser Header Checks',        'description' => 'Checks whether important browser security headers are present and valid.',                          'max' => 30],
         'malware'       => ['title' => 'Malware & Injection Signals', 'description' => 'Scans page HTML for suspicious injection, obfuscation, and malware patterns.',                     'max' => 20],
         'mixed_content' => ['title' => 'Mixed Content & HTTPS',       'description' => 'Checks whether HTTPS pages avoid loading insecure HTTP resources.',                                 'max' => 15],
     ];
@@ -90,6 +90,7 @@
     <h3 class="font-semibold text-slate-800 mb-3">Security Score Breakdown</h3>
     <div class="space-y-4 mb-8">
         @foreach ($categoryConfig as $key => $config)
+            @continue($key === 'headers')
             @php
                 $category = $securityCategories->get($key, []);
                 $score    = $category['score'] ?? 0;
@@ -129,54 +130,21 @@
         @endforeach
     </div>
 
-    {{-- Detailed header breakdown (like Python output) --}}
-    @php
-        $headersCategory = $securityCategories->get('headers', []);
-        $headerItems     = $headersCategory['details'] ?? $headersCategory['items'] ?? [];
-        $missingHeaders  = collect($headerItems)->filter(fn ($item) => ! ($item['present'] ?? false))->keys();
-    @endphp
-
-    @if ($missingHeaders->isNotEmpty())
-        <h3 class="font-semibold text-slate-800 mb-3">HTTP Security Headers</h3>
-        <div class="space-y-4 mb-8">
-            @foreach ($missingHeaders as $hKey)
-                @php $meta = $expectedHeaders[$hKey] ?? null; @endphp
-                @if ($meta)
-                    <div class="rounded-lg border border-slate-200 bg-white p-5">
-                        <div class="flex items-center justify-between mb-3">
-                            <div>
-                                <p class="font-semibold text-slate-800">{{ $meta['label'] }}</p>
-                                <p class="text-xs font-mono text-slate-400">{{ $hKey }}</p>
-                            </div>
-                            <span class="px-2 py-1 rounded text-xs font-semibold bg-red-100 text-red-700">Missing</span>
-                        </div>
-                        <div class="space-y-2 text-sm">
-                            <div><span class="font-semibold text-slate-700">What it is:</span> <span class="text-slate-600">{{ $meta['what'] }}</span></div>
-                            <div><span class="font-semibold text-slate-700">Why this error appears:</span> <span class="text-slate-600">{{ $meta['why'] }}</span></div>
-                            <div><span class="font-semibold text-slate-700">Security impact:</span> <span class="text-slate-600">{{ $meta['impact'] }}</span></div>
-                        </div>
-                    </div>
-                @endif
-            @endforeach
-            @if ($missingHeaders->contains('x-xss-protection'))
-                <p class="text-xs text-slate-500 italic">Note: Modern browsers mostly rely on Content Security Policy (CSP) instead.</p>
-            @endif
-        </div>
-    @endif
-
 @else
     <div class="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
         No detailed security data available yet. Run an SEO/security check to populate this section.
     </div>
 @endif
 
-{{-- Present headers table --}}
-<h3 class="font-semibold text-slate-800 mb-3">Security Response Headers</h3>
-<div class="overflow-auto rounded-lg border border-slate-200 bg-white">
+<section class="rounded-lg border border-slate-200 bg-white p-5">
+    <h3 class="font-semibold text-slate-800">Security Headers</h3>
+
+<div class="mt-3 overflow-auto rounded-lg border border-slate-200">
     <table class="min-w-full text-sm">
         <thead class="bg-slate-50 border-b">
             <tr>
-                <th class="px-4 py-3 text-left font-semibold text-slate-700">Header</th>
+                <th class="px-4 py-3 text-left font-semibold text-slate-700">Name</th>
+                <th class="px-4 py-3 text-left font-semibold text-slate-700">Description</th>
                 <th class="px-4 py-3 text-left font-semibold text-slate-700">Value</th>
                 <th class="px-4 py-3 text-left font-semibold text-slate-700">Status</th>
             </tr>
@@ -187,9 +155,18 @@
                     $value  = $storedHeaders->get($hKey);
                     $present = $value !== null;
                 @endphp
-                <tr class="border-t hover:bg-slate-50">
-                    <td class="px-4 py-3 font-medium">{{ $meta['label'] }}</td>
-                    <td class="px-4 py-3 text-slate-600 break-all max-w-md">{{ $present ? $value : '—' }}</td>
+                <tr class="border-t align-top hover:bg-slate-50">
+                    <td class="px-4 py-3">
+                        <p class="font-medium text-slate-800">{{ $meta['label'] }}</p>
+                        <p class="mt-1 font-mono text-xs text-slate-400">{{ $hKey }}</p>
+                    </td>
+                    <td class="max-w-lg px-4 py-3 text-slate-600">
+                        <p>{{ $meta['what'] }}</p>
+                        @unless ($present)
+                            <p class="mt-1 text-xs text-slate-500">{{ $meta['impact'] }}</p>
+                        @endunless
+                    </td>
+                    <td class="px-4 py-3 text-slate-600 break-all max-w-md">{{ $present ? $value : '-' }}</td>
                     <td class="px-4 py-3">
                         @if ($present)
                             <span class="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-700">Present</span>
@@ -202,3 +179,4 @@
         </tbody>
     </table>
 </div>
+</section>

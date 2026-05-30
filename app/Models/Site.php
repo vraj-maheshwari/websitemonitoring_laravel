@@ -19,6 +19,7 @@ use Illuminate\Support\Carbon;
  * @property bool $dns_resolved
  * @property bool $dns_hijack_suspected
  * @property bool $dns_ns_changed
+ * @property bool $dnssec_enabled
  * @property bool $is_processing
  * @property bool $in_fleet
  * @property string|null $current_status
@@ -29,6 +30,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $security_status
  * @property string|null $dns_status
  * @property string|null $ssl_state
+ * @property array|null $ssl_subject_alt_names
  * @property int|null $uptime_interval
  * @property int|null $ssl_interval
  * @property int|null $seo_interval
@@ -56,6 +58,8 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $last_downtime_started_at
  * @property Carbon|null $last_downtime_ended_at
  * @property Carbon|null $ssl_expiry_date
+ * @property Carbon|null $ssl_valid_from
+ * @property Carbon|null $ssl_valid_until
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -69,11 +73,15 @@ class Site extends Model
         return [
             'tracked_keywords' => 'array',
             'security_headers' => 'array',
+            'ssl_subject_alt_names' => 'array',
+            'ssl_is_trusted' => 'boolean',
+            'ssl_hostname_valid' => 'boolean',
             'dns_last_ips' => 'array',
             'dns_last_ns' => 'array',
             'dns_resolved' => 'boolean',
             'dns_hijack_suspected' => 'boolean',
             'dns_ns_changed' => 'boolean',
+            'dnssec_enabled' => 'boolean',
             'is_processing' => 'boolean',
             'in_fleet' => 'boolean',
             'next_uptime_check_at' => 'datetime',
@@ -95,6 +103,8 @@ class Site extends Model
             'last_downtime_started_at' => 'datetime',
             'last_downtime_ended_at' => 'datetime',
             'ssl_expiry_date' => 'date',
+            'ssl_valid_from' => 'date',
+            'ssl_valid_until' => 'date',
         ];
     }
 

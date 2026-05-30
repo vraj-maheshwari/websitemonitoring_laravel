@@ -16,8 +16,15 @@ class DnsLog extends Model
             'ips' => 'array',
             'nameservers' => 'array',
             'mx_records' => 'array',
+            'txt_records' => 'array',
+            'cname_records' => 'array',
+            'soa_records' => 'array',
+            'caa_records' => 'array',
+            'dnssec_enabled' => 'boolean',
             'hijack_suspected' => 'boolean',
             'ns_changed' => 'boolean',
+            'nameserver_health' => 'array',
+            'change_details' => 'array',
         ];
     }
 

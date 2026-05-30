@@ -50,7 +50,7 @@ class DashboardController extends Controller
             'down' => $sites->where('current_status', 'down')->count(),
             'degraded' => $sites->where('current_status', 'degraded')->count(),
             'avg_uptime' => null,
-            'ssl_expiring' => $sites->where('ssl_state', 'expiring')->count(),
+            'ssl_expiring' => $sites->whereIn('ssl_state', ['critical', 'expiring'])->count(),
             'avg_seo' => round((float) $sites->avg('seo_score'), 1),
         ];
     }

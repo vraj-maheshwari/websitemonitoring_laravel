@@ -443,13 +443,120 @@ class SeoService
     {
         $lower = strtolower($html);
         $server = $headers['Server'][0] ?? $headers['server'][0] ?? null;
+        $poweredBy = $headers['X-Powered-By'][0] ?? $headers['x-powered-by'][0] ?? null;
+        $serverLower = strtolower((string) $server);
+        $poweredByLower = strtolower((string) $poweredBy);
+
+        $cms = [];
+        $frameworks = [];
+        $analytics = [];
+        $backend = [];
+        $infrastructure = [];
+
+        // Future improvement: use a browser renderer such as Playwright,
+        // Puppeteer, or another headless browser to inspect hydrated DOM and
+        // runtime globals. Raw Http::get() HTML can miss JS-rendered React,
+        // Vue, and Next.js applications after production builds.
+        if ($this->containsAny($lower, ['wp-content', 'wp-json'])) {
+            $cms[] = 'WordPress';
+        }
+        if ($this->containsAny($lower, ['sites/default'])) {
+            $cms[] = 'Drupal';
+        }
+        if ($this->containsAny($lower, ['joomla'])) {
+            $cms[] = 'Joomla';
+        }
+        if ($this->containsAny($lower, ['shopify', 'cdn.shopify'])) {
+            $cms[] = 'Shopify';
+        }
+        if ($this->containsAny($lower, ['mage'])) {
+            $cms[] = 'Magento';
+        }
+
+        if ($this->containsAny($lower, ['id="root"', "id='root'", 'data-reactroot', 'react-dom', '__react_devtools_global_hook__'])) {
+            $frameworks[] = 'React';
+        }
+        if ($this->containsAny($lower, ['__next', '_next/static', 'nextexport'])) {
+            $frameworks[] = 'Next.js';
+        }
+        if ($this->containsAny($lower, ['id="app"', "id='app'", 'data-v-', '__vue__'])) {
+            $frameworks[] = 'Vue';
+        }
+        if ($this->containsAny($lower, ['ng-version', 'ng-app'])) {
+            $frameworks[] = 'Angular';
+        }
+        if ($this->containsAny($lower, ['csrf-token', '/livewire/', '/vendor/livewire/'])) {
+            $frameworks[] = 'Laravel';
+        }
+
+        if ($this->containsAny($lower, ['google-analytics', 'googletagmanager', 'gtag'])) {
+            $analytics[] = 'Google Analytics/GTM';
+        }
+        if ($this->containsAny($lower, ['connect.facebook.net'])) {
+            $analytics[] = 'Facebook Pixel';
+        }
+        if ($this->containsAny($lower, ['hotjar'])) {
+            $analytics[] = 'Hotjar';
+        }
+        if ($this->containsAny($lower, ['clarity.ms'])) {
+            $analytics[] = 'Microsoft Clarity';
+        }
+
+        if ($this->containsAny($poweredByLower, ['php'])) {
+            $backend[] = 'PHP';
+        }
+        if ($this->containsAny($poweredByLower, ['express'])) {
+            $backend[] = 'Node.js';
+        }
+        if ($this->containsAny($poweredByLower, ['asp.net'])) {
+            $backend[] = 'ASP.NET';
+        }
+        if ($this->containsAny($poweredByLower, ['django'])) {
+            $backend[] = 'Django';
+        }
+        if ($this->containsAny($poweredByLower, ['ruby on rails', 'rails'])) {
+            $backend[] = 'Ruby on Rails';
+        }
+
+        if ($this->containsAny($serverLower, ['nginx'])) {
+            $infrastructure[] = 'Nginx';
+        }
+        if ($this->containsAny($serverLower, ['openresty'])) {
+            $infrastructure[] = 'OpenResty';
+            $infrastructure[] = 'Nginx';
+        }
+        if ($this->containsAny($serverLower, ['apache'])) {
+            $infrastructure[] = 'Apache';
+        }
+        if ($this->containsAny($serverLower, ['cloudflare'])) {
+            $infrastructure[] = 'Cloudflare';
+        }
+        if ($this->containsAny($serverLower, ['litespeed'])) {
+            $infrastructure[] = 'LiteSpeed';
+        }
+        if ($this->containsAny($serverLower, ['iis', 'microsoft-iis'])) {
+            $infrastructure[] = 'IIS';
+        }
 
         return [
-            'cms' => str_contains($lower, 'wp-content') ? ['WordPress'] : [],
-            'frameworks' => collect(['React' => 'react', 'Vue' => 'vue', 'Next.js' => '__next', 'Laravel' => 'laravel'])->filter(fn ($needle) => str_contains($lower, $needle))->keys()->values()->all(),
-            'analytics' => str_contains($lower, 'googletagmanager') || str_contains($lower, 'google-analytics') ? ['Google Analytics/GTM'] : [],
+            'cms' => array_values(array_unique($cms)),
+            'frameworks' => array_values(array_unique($frameworks)),
+            'analytics' => array_values(array_unique($analytics)),
+            'backend' => array_values(array_unique($backend)),
+            'infrastructure' => array_values(array_unique($infrastructure)),
             'server' => array_values(array_filter([$server])),
         ];
+    }
+
+    private function containsAny(string $content, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($content, strtolower($needle))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function quickBrokenLinks(array $links): array
