@@ -1,59 +1,180 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# WebMonitoring — Laravel Website Monitoring Suite
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A Laravel-based website monitoring and auditing system that runs scheduled checks (uptime, SSL, DNS, SEO, link audits, security) and produces summaries, alerts, and reports. This repository contains the backend services, jobs, models, and integrations used by the monitoring platform.
 
-## About Laravel
+## Quick links
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- Services: [app/Services](app/Services)
+- Jobs: [app/Jobs](app/Jobs)
+- Models: [app/Models](app/Models)
+- Routes: [routes/web.php](routes/web.php)
+- Configuration: [config/*.php](config)
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Project overview
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+WebMonitoring performs periodic checks against monitored sites and records results. The system is built around:
 
-## Learning Laravel
+- Service classes (in `app/Services`) that implement check logic and coordinate subsystems.
+- Queueable Jobs (in `app/Jobs`) that invoke services on schedules or when work is dispatched.
+- Eloquent Models (in `app/Models`) that persist results and incidents.
+- Notification integrations (Microsoft Teams) for alerts.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+Checks include uptime, SSL, DNS, SEO, security scanning, and link audits. The system also aggregates daily summaries and retention/cleanup cycles for historic data.
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Architecture & flow
 
-## Laravel Sponsors
+1. Scheduler triggers artisan commands (cron calling `php artisan schedule:run`).
+2. Scheduled commands dispatch Jobs (e.g., `RunUptimeCheckJob`, `RunSslCheckJob`).
+3. Jobs call Service classes (`UptimeService`, `SslService`, etc.) to perform checks and create logs/models.
+4. `AlertService` evaluates results against thresholds and creates `Incident` records or `AlertHistory` entries.
+5. `TeamsNotificationService` sends notifications to configured Microsoft Teams channels when incidents or alerts occur.
+6. `SummaryService` and daily Jobs generate aggregated summaries stored in `DailyUptimeSummary`, `DailySslSummary`, `DailySeoSummary`, etc.
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Services (core)
 
-### Premium Partners
+Below are the primary services in `app/Services` with their responsibilities.
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+- `UptimeService.php` — Performs uptime checks and records `UptimeLog` entries.
+- `SslService.php` — Validates SSL certificates, expiration, and records `SslLog` entries.
+- `DnsService.php` — Runs DNS lookups and persists `DnsLog` entries.
+- `SeoService.php` — Performs SEO-related audits and writes `SeoLog` results.
+- `SecurityService.php` — Runs security checks/audits and records findings.
+- `FullLinkAuditService.php` — Conducts exhaustive link audits and writes `FullLinkAuditLog`.
+- `BrokenLinksUnifiedService.php` — Unifies broken link detection logic and reporting.
+- `MonitoringService.php` — High-level orchestration service used by Jobs to run configured checks for a `Site`.
+- `AlertService.php` — Evaluates check results and manages alerting/incident creation.
+- `TeamsNotificationService.php` — Sends alerts/summary notifications to Microsoft Teams.
+- `SummaryService.php` — Builds daily summaries across multiple checks and persists `Daily*Summary` models.
+- `RetentionService.php` — Cleans up old logs according to retention policies.
+- `ReportService.php` — Generates downloadable or scheduled reports based on collected data.
+- `IncidentService.php` — Manages incident lifecycle and enrichment.
+- `AnalyticsService.php` — Tracks metrics and usage analytics for dashboards and reports.
+
+Files: [app/Services](app/Services)
+
+## Jobs
+
+Key jobs live in `app/Jobs` and generally perform a single check or background task. Examples:
+
+- `RunUptimeCheckJob.php` — Dispatches uptime checks for configured sites.
+- `RunSslCheckJob.php` — Dispatches SSL validation tasks.
+- `RunDnsCheckJob.php` — Performs DNS probing jobs.
+- `RunSeoCheckJob.php`, `RunSecurityCheckJob.php` — Run respective audits.
+- `RunFullAuditJob.php`, `RunFullLinkAuditJob.php` — Full-scan jobs, usually longer running.
+- `DailySummaryJob.php` — Aggregates daily results into summary tables.
+- `DispatchDueChecksJob.php` — Top-level dispatcher that enqueues due checks according to site schedules.
+- `RetentionCycleJob.php` — Triggers retention cleanup via `RetentionService`.
+
+Files: [app/Jobs](app/Jobs)
+
+## Models and data
+
+Primary models are in `app/Models` and include:
+
+- `Site` — Represents a monitored website and its configuration (checks enabled, thresholds, notification settings).
+- `UptimeLog`, `SslLog`, `DnsLog`, `SeoLog`, `FullLinkAuditLog` — Raw results from checks.
+- `Incident` — Records problems detected and tracks status.
+- `AlertHistory` — Stores alert events history.
+- `DailyUptimeSummary`, `DailySslSummary`, `DailySeoSummary` — Aggregated daily summaries.
+
+Files: [app/Models](app/Models)
+
+## Configuration & environment
+
+- Copy `.env.example` to `.env` and configure database, queue driver, and Teams webhook URL.
+- Important env vars: `DB_CONNECTION`, `QUEUE_CONNECTION`, `TEAMS_WEBHOOK_URL`, `APP_URL`, `APP_ENV`, `APP_KEY`.
+
+Recommended queue: Redis (fast) or database (simple). For production, run queue workers with Supervisor or use Laravel Horizon for monitoring.
+
+## Setup and running locally
+
+1. Install PHP dependencies and node packages:
+
+```bash
+composer install
+npm install
+npm run build
+```
+
+2. Copy env and generate app key:
+
+```bash
+cp .env.example .env
+php artisan key:generate
+```
+
+3. Configure DB and run migrations + seeders:
+
+```bash
+php artisan migrate --seed
+```
+
+4. Create storage symlink (if needed):
+
+```bash
+php artisan storage:link
+```
+
+5. Run queue worker and scheduler (for development):
+
+```bash
+php artisan queue:work
+php artisan schedule:work
+```
+
+Or run the scheduler via cron in production:
+
+```cron
+* * * * * cd /path/to/project && php artisan schedule:run >> /dev/null 2>&1
+```
+
+## Common artisan commands
+
+- Dispatch due checks immediately: `php artisan checks:dispatch` (if implemented)
+- Run a single job manually: `php artisan tinker` then dispatch job or `php artisan queue:work --once`
+- Generate reports/summaries: `php artisan reports:generate` (if present)
+
+Refer to the `app/Console` commands for the exact command names.
+
+## Testing
+
+This project uses Pest/PHPUnit. Run tests with:
+
+```bash
+./vendor/bin/pest
+```
+
+## Deployment notes
+
+- Use a persistent queue (Redis) and run multiple `php artisan queue:work` processes behind Supervisor or systemd.
+- Ensure the scheduler runs every minute via cron to enqueue periodic checks.
+- Configure appropriate `APP_ENV` / `APP_DEBUG` and secure the `TEAMS_WEBHOOK_URL` in environment.
+
+## Troubleshooting
+
+- If checks are not running, ensure the scheduler is active and the `DispatchDueChecksJob` is executing.
+- Check `storage/logs/laravel.log` for exceptions from Jobs or Services.
 
 ## Contributing
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+1. Fork the repository and create a topic branch.
+2. Write tests for new behavior where possible.
+3. Submit a pull request with a clear description of the change.
 
-## Code of Conduct
+## Where to look in the code
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+- Service implementations: [app/Services](app/Services)
+- Jobs and scheduling: [app/Jobs](app/Jobs)
+- Models: [app/Models](app/Models)
+- Console commands and scheduler: [app/Console](app/Console)
+- Routes: [routes/web.php](routes/web.php)
 
-## Security Vulnerabilities
+---
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+If you'd like, I can:
 
-## License
+- Expand any service section with method-level details (read the specific service files).
+- Add examples for `.env` values and a Supervisor config snippet.
+- Create a `docs/` directory with separate pages for each service.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Tell me which next step you want.

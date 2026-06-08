@@ -7,9 +7,12 @@ use App\Models\Site;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
+use App\Services\LighthouseService;
+use App\Services\AiReadinessService;
+
 class SeoService
 {
-    public function __construct(private MonitoringService $monitoring, private SecurityService $security, private AlertService $alerts) {}
+    public function __construct(private MonitoringService $monitoring, private SecurityService $security, private AlertService $alerts, private LighthouseService $lighthouse, private AiReadinessService $aiReadiness) {}
 
     public function shouldSkipForCooldown(Site $site): bool
     {
@@ -49,7 +52,44 @@ class SeoService
         $signals['https_redirect']  = str_starts_with($site->url, 'https://');
         $score = $this->score($signals, $response->status(), $site->url);
         $securityAudit = $this->security->runSecurityAudit($html, $response->headers(), $site->url);
-        $cwv = $this->estimateCwv($html, (float) ($site->last_ttfb ?: 500));
+        $cwv = [
+            'performance_score' => null,
+            'lcp_ms' => null,
+            'fcp_ms' => null,
+            'tbt_ms' => null,
+            'cls' => null,
+        ];
+
+        $lighthouseResult = [];
+
+        try {
+
+            $lighthouseResult =
+                $this->lighthouse->runAudit($site->url);
+
+            Log::info('LIGHTHOUSE SUCCESS',[
+                'site'=>$site->url,
+                'performance'=>
+                data_get(
+                    $lighthouseResult,
+                    'categories.performance.score'
+                )
+            ]);
+
+        } catch(\Throwable $e){
+
+            Log::error('LIGHTHOUSE ERROR',[
+                'site'=>$site->url,
+                'message'=>$e->getMessage()
+            ]);
+        }
+
+        $ai = [];
+        try {
+            $ai = $this->aiReadiness->analyze($site->url);
+        } catch (\Throwable $e) {
+            $ai = [];
+        }
 
         $log = SeoLog::create([
             'site_id' => $site->id,
@@ -69,6 +109,15 @@ class SeoService
             'security_score' => $securityAudit['score'],
             'security_grade' => $securityAudit['grade'],
             'security_headers' => $response->headers(),
+            'lighthouse' => $lighthouseResult,
+            'ai_details' => $ai,
+            'llms_exists' => $ai['llms']['exists'] ?? false,
+            'gptbot_allowed' => $ai['robots']['gptbot'] ?? null,
+            'claudebot_allowed' => $ai['robots']['claudebot'] ?? null,
+            'google_extended_allowed' => $ai['robots']['google_extended'] ?? null,
+            'ai_policy_found' => !empty($ai['policy']),
+            'docs_found' => !empty($ai['docs']),
+            'ai_score' => $ai['score'] ?? 0,
         ]);
 
         Log::info('SEO check completed', [
@@ -84,15 +133,22 @@ class SeoService
             'fetch' => $fetch['diagnostics'],
         ]);
 
+        $perfScoreVal = data_get($lighthouseResult, 'categories.performance.score', null);
+        $lcpVal = data_get($lighthouseResult, 'audits.largest-contentful-paint.numericValue', null);
+        $fcpVal = data_get($lighthouseResult, 'audits.first-contentful-paint.numericValue', null);
+        $tbtVal = data_get($lighthouseResult, 'audits.total-blocking-time.numericValue', null);
+        $clsVal = data_get($lighthouseResult, 'audits.cumulative-layout-shift.numericValue', null);
+
         $site->fill([
             'seo_score' => $score['score'],
             'seo_state' => $score['state'],
             'seo_status' => $fetch['is_valid'] ? ($score['score'] >= 75 ? 'ok' : 'warning') : 'error',
-            'performance_score' => $cwv['performance_score'],
-            'lcp_ms' => $cwv['lcp_ms'],
-            'fcp_ms' => $cwv['fcp_ms'],
-            'tbt_ms' => $cwv['tbt_ms'],
-            'cls' => $cwv['cls'],
+            'performance_score' => $perfScoreVal !== null ? round($perfScoreVal * 100) : $site->performance_score,
+            'lcp_ms' => $lcpVal !== null ? $lcpVal : $site->lcp_ms,
+            'fcp_ms' => $fcpVal !== null ? $fcpVal : $site->fcp_ms,
+            'tbt_ms' => $tbtVal !== null ? $tbtVal : $site->tbt_ms,
+            'cls' => $clsVal !== null ? $clsVal : $site->cls,
+
             'security_score' => $securityAudit['score'],
             'security_grade' => $securityAudit['grade'],
             'security_headers' => $response->headers(),
@@ -394,160 +450,329 @@ class SeoService
         return ['score' => min(100, $points), 'state' => $points >= 75 ? 'good' : ($points >= 50 ? 'warning' : 'poor'), 'issues' => $issues, 'recommendations' => $recommendations];
     }
 
-    private function estimateCwv(string $html, float $ttfb): array
-    {
-        $scriptCount  = $html ? substr_count(strtolower($html), '<script') : 0;
-        $cssCount     = $html ? substr_count(strtolower($html), '<link rel="stylesheet"') : 0;
-        $imgCount     = $html ? substr_count(strtolower($html), '<img') : 0;
-        $imgNoAlt     = $html ? preg_match_all('/<img(?![^>]*\balt\s*=)[^>]*>/i', $html) : 0;
-        $pageSizeKb   = round(strlen($html) / 1024, 2);
+    
 
-        // LCP estimate: TTFB + render delay from blocking resources + page size
-        $renderDelay = ($scriptCount * 0.25) + ($cssCount * 0.05) + ($pageSizeKb / 1000);
-        $lcpS        = round($ttfb / 1000 + $renderDelay, 2);
+    // private function detectTechnology(string $html, array $headers): array
+    // {
+    //     $lower = strtolower($html);
+    //     $server = $headers['Server'][0] ?? $headers['server'][0] ?? null;
+    //     $poweredBy = $headers['X-Powered-By'][0] ?? $headers['x-powered-by'][0] ?? null;
+    //     $serverLower = strtolower((string) $server);
+    //     $poweredByLower = strtolower((string) $poweredBy);
 
-        // FID/INP estimate: blocking scripts in head
-        $jsBlocking  = $html ? preg_match_all('/<head[^>]*>.*?<script[^>]+src[^>]*(?!async|defer)[^>]*>/is', $html) : 0;
-        $fidMs       = $jsBlocking * 80;
+    //     $cms = [];
+    //     $frameworks = [];
+    //     $analytics = [];
+    //     $backend = [];
+    //     $infrastructure = [];
 
-        // CLS estimate: images without alt/dimensions
-        $clsEstimate = $imgNoAlt > 0 ? min(2.5, round($imgNoAlt * 0.05, 2)) : 0.0;
+    //     // Future improvement: use a browser renderer such as Playwright,
+    //     // Puppeteer, or another headless browser to inspect hydrated DOM and
+    //     // runtime globals. Raw Http::get() HTML can miss JS-rendered React,
+    //     // Vue, and Next.js applications after production builds.
+    //     if ($this->containsAny($lower, ['wp-content', 'wp-json'])) {
+    //         $cms[] = 'WordPress';
+    //     }
+    //     if ($this->containsAny($lower, ['sites/default'])) {
+    //         $cms[] = 'Drupal';
+    //     }
+    //     if ($this->containsAny($lower, ['joomla'])) {
+    //         $cms[] = 'Joomla';
+    //     }
+    //     if ($this->containsAny($lower, ['shopify', 'cdn.shopify'])) {
+    //         $cms[] = 'Shopify';
+    //     }
+    //     if ($this->containsAny($lower, ['mage'])) {
+    //         $cms[] = 'Magento';
+    //     }
 
-        // Ratings
-        $lcpRating = $lcpS <= 2.5 ? 'good' : ($lcpS <= 4.0 ? 'needs_improvement' : 'poor');
-        $fidRating = $fidMs <= 100 ? 'good' : ($fidMs <= 300 ? 'needs_improvement' : 'poor');
-        $clsRating = $clsEstimate <= 0.1 ? 'good' : ($clsEstimate <= 0.25 ? 'needs_improvement' : 'poor');
+    //     if ($this->containsAny($lower, ['id="root"', "id='root'", 'data-reactroot', 'react-dom', '__react_devtools_global_hook__'])) {
+    //         $frameworks[] = 'React';
+    //     }
+    //     if ($this->containsAny($lower, ['__next', '_next/static', 'nextexport'])) {
+    //         $frameworks[] = 'Next.js';
+    //     }
+    //     if ($this->containsAny($lower, ['id="app"', "id='app'", 'data-v-', '__vue__'])) {
+    //         $frameworks[] = 'Vue';
+    //     }
+    //     if ($this->containsAny($lower, ['ng-version', 'ng-app'])) {
+    //         $frameworks[] = 'Angular';
+    //     }
+    //     if ($this->containsAny($lower, ['csrf-token', '/livewire/', '/vendor/livewire/'])) {
+    //         $frameworks[] = 'Laravel';
+    //     }
 
-        // Performance score (0-100)
-        $perfScore = max(0, min(100, 100 - ($lcpS * 5) - ($fidMs / 50) - ($clsEstimate * 20)));
+    //     if ($this->containsAny($lower, ['google-analytics', 'googletagmanager', 'gtag'])) {
+    //         $analytics[] = 'Google Analytics/GTM';
+    //     }
+    //     if ($this->containsAny($lower, ['connect.facebook.net'])) {
+    //         $analytics[] = 'Facebook Pixel';
+    //     }
+    //     if ($this->containsAny($lower, ['hotjar'])) {
+    //         $analytics[] = 'Hotjar';
+    //     }
+    //     if ($this->containsAny($lower, ['clarity.ms'])) {
+    //         $analytics[] = 'Microsoft Clarity';
+    //     }
 
-        return [
-            'performance_score' => round($perfScore),
-            'lcp_ms'            => round($lcpS * 1000, 2),
-            'lcp_estimate_s'    => $lcpS,
-            'lcp_note'          => "Estimated from TTFB ({$ttfb}ms) + render delay ({$renderDelay}s from {$jsBlocking} blocking scripts, {$cssCount} blocking stylesheets, {$pageSizeKb} KB page). Not a real browser measurement.",
-            'lcp_rating'        => $lcpRating,
-            'fcp_ms'            => round($lcpS * 1000 * 0.6, 2),
-            'fid_estimate_ms'   => $fidMs,
-            'fid_note'          => "Estimated from {$jsBlocking} render-blocking script(s) in <head>. Each blocking script delays interactivity by ~80ms. Not a real browser measurement.",
-            'fid_rating'        => $fidRating,
-            'tbt_ms'            => $scriptCount * 35,
-            'cls'               => $clsEstimate,
-            'cls_estimate'      => $clsEstimate,
-            'cls_note'          => $imgNoAlt > 0 ? "Estimated from {$imgNoAlt} image(s) missing alt text (images without alt often also lack explicit dimensions, a primary CLS cause). Not a real browser measurement." : "No images missing alt text detected.",
-            'cls_rating'        => $clsRating,
-        ];
+    //     if ($this->containsAny($poweredByLower, ['php'])) {
+    //         $backend[] = 'PHP';
+    //     }
+    //     if ($this->containsAny($poweredByLower, ['express'])) {
+    //         $backend[] = 'Node.js';
+    //     }
+    //     if ($this->containsAny($poweredByLower, ['asp.net'])) {
+    //         $backend[] = 'ASP.NET';
+    //     }
+    //     if ($this->containsAny($poweredByLower, ['django'])) {
+    //         $backend[] = 'Django';
+    //     }
+    //     if ($this->containsAny($poweredByLower, ['ruby on rails', 'rails'])) {
+    //         $backend[] = 'Ruby on Rails';
+    //     }
+
+    //     if ($this->containsAny($serverLower, ['nginx'])) {
+    //         $infrastructure[] = 'Nginx';
+    //     }
+    //     if ($this->containsAny($serverLower, ['openresty'])) {
+    //         $infrastructure[] = 'OpenResty';
+    //         $infrastructure[] = 'Nginx';
+    //     }
+    //     if ($this->containsAny($serverLower, ['apache'])) {
+    //         $infrastructure[] = 'Apache';
+    //     }
+    //     if ($this->containsAny($serverLower, ['cloudflare'])) {
+    //         $infrastructure[] = 'Cloudflare';
+    //     }
+    //     if ($this->containsAny($serverLower, ['litespeed'])) {
+    //         $infrastructure[] = 'LiteSpeed';
+    //     }
+    //     if ($this->containsAny($serverLower, ['iis', 'microsoft-iis'])) {
+    //         $infrastructure[] = 'IIS';
+    //     }
+
+    //     return [
+    //         'cms' => array_values(array_unique($cms)),
+    //         'frameworks' => array_values(array_unique($frameworks)),
+    //         'analytics' => array_values(array_unique($analytics)),
+    //         'backend' => array_values(array_unique($backend)),
+    //         'infrastructure' => array_values(array_unique($infrastructure)),
+    //         'server' => array_values(array_filter([$server])),
+    //     ];
+    // }
+private function detectTechnology(string $html,array $headers):array
+{
+    $content=strtolower($html);
+    $headerText=strtolower(json_encode($headers));
+
+    preg_match_all(
+        '/<(script|link)[^>]+(?:src|href)=["\']([^"\']+)["\']/i',
+        $html,
+        $matches
+    );
+
+    $assets=strtolower(
+        implode(' ',$matches[2] ?? [])
+    );
+
+    $content.=" ".$assets." ".$headerText;
+
+    $tech=[
+        'cms'=>[],
+        'frameworks'=>[],
+        'analytics'=>[],
+        'backend'=>[],
+        'infrastructure'=>[],
+        'libraries'=>[]
+    ];
+
+
+
+    /* CMS */
+
+    if(
+        preg_match(
+            '/wp-content|wp-json|wp-includes/i',
+            $content
+        )
+    ){
+        $tech['cms'][]='WordPress';
+        $tech['backend'][]='PHP';
     }
 
-    private function detectTechnology(string $html, array $headers): array
-    {
-        $lower = strtolower($html);
-        $server = $headers['Server'][0] ?? $headers['server'][0] ?? null;
-        $poweredBy = $headers['X-Powered-By'][0] ?? $headers['x-powered-by'][0] ?? null;
-        $serverLower = strtolower((string) $server);
-        $poweredByLower = strtolower((string) $poweredBy);
-
-        $cms = [];
-        $frameworks = [];
-        $analytics = [];
-        $backend = [];
-        $infrastructure = [];
-
-        // Future improvement: use a browser renderer such as Playwright,
-        // Puppeteer, or another headless browser to inspect hydrated DOM and
-        // runtime globals. Raw Http::get() HTML can miss JS-rendered React,
-        // Vue, and Next.js applications after production builds.
-        if ($this->containsAny($lower, ['wp-content', 'wp-json'])) {
-            $cms[] = 'WordPress';
-        }
-        if ($this->containsAny($lower, ['sites/default'])) {
-            $cms[] = 'Drupal';
-        }
-        if ($this->containsAny($lower, ['joomla'])) {
-            $cms[] = 'Joomla';
-        }
-        if ($this->containsAny($lower, ['shopify', 'cdn.shopify'])) {
-            $cms[] = 'Shopify';
-        }
-        if ($this->containsAny($lower, ['mage'])) {
-            $cms[] = 'Magento';
-        }
-
-        if ($this->containsAny($lower, ['id="root"', "id='root'", 'data-reactroot', 'react-dom', '__react_devtools_global_hook__'])) {
-            $frameworks[] = 'React';
-        }
-        if ($this->containsAny($lower, ['__next', '_next/static', 'nextexport'])) {
-            $frameworks[] = 'Next.js';
-        }
-        if ($this->containsAny($lower, ['id="app"', "id='app'", 'data-v-', '__vue__'])) {
-            $frameworks[] = 'Vue';
-        }
-        if ($this->containsAny($lower, ['ng-version', 'ng-app'])) {
-            $frameworks[] = 'Angular';
-        }
-        if ($this->containsAny($lower, ['csrf-token', '/livewire/', '/vendor/livewire/'])) {
-            $frameworks[] = 'Laravel';
-        }
-
-        if ($this->containsAny($lower, ['google-analytics', 'googletagmanager', 'gtag'])) {
-            $analytics[] = 'Google Analytics/GTM';
-        }
-        if ($this->containsAny($lower, ['connect.facebook.net'])) {
-            $analytics[] = 'Facebook Pixel';
-        }
-        if ($this->containsAny($lower, ['hotjar'])) {
-            $analytics[] = 'Hotjar';
-        }
-        if ($this->containsAny($lower, ['clarity.ms'])) {
-            $analytics[] = 'Microsoft Clarity';
-        }
-
-        if ($this->containsAny($poweredByLower, ['php'])) {
-            $backend[] = 'PHP';
-        }
-        if ($this->containsAny($poweredByLower, ['express'])) {
-            $backend[] = 'Node.js';
-        }
-        if ($this->containsAny($poweredByLower, ['asp.net'])) {
-            $backend[] = 'ASP.NET';
-        }
-        if ($this->containsAny($poweredByLower, ['django'])) {
-            $backend[] = 'Django';
-        }
-        if ($this->containsAny($poweredByLower, ['ruby on rails', 'rails'])) {
-            $backend[] = 'Ruby on Rails';
-        }
-
-        if ($this->containsAny($serverLower, ['nginx'])) {
-            $infrastructure[] = 'Nginx';
-        }
-        if ($this->containsAny($serverLower, ['openresty'])) {
-            $infrastructure[] = 'OpenResty';
-            $infrastructure[] = 'Nginx';
-        }
-        if ($this->containsAny($serverLower, ['apache'])) {
-            $infrastructure[] = 'Apache';
-        }
-        if ($this->containsAny($serverLower, ['cloudflare'])) {
-            $infrastructure[] = 'Cloudflare';
-        }
-        if ($this->containsAny($serverLower, ['litespeed'])) {
-            $infrastructure[] = 'LiteSpeed';
-        }
-        if ($this->containsAny($serverLower, ['iis', 'microsoft-iis'])) {
-            $infrastructure[] = 'IIS';
-        }
-
-        return [
-            'cms' => array_values(array_unique($cms)),
-            'frameworks' => array_values(array_unique($frameworks)),
-            'analytics' => array_values(array_unique($analytics)),
-            'backend' => array_values(array_unique($backend)),
-            'infrastructure' => array_values(array_unique($infrastructure)),
-            'server' => array_values(array_filter([$server])),
-        ];
+    if(
+        preg_match(
+            '/elementor/i',
+            $content
+        )
+    ){
+        $tech['cms'][]='Elementor';
     }
 
+    if(
+        preg_match(
+            '/yoast/i',
+            $content
+        )
+    ){
+        $tech['cms'][]='Yoast SEO';
+    }
+
+    if(
+        preg_match(
+            '/mage-cache|magento|mage\/cookies/i',
+            $content
+        )
+    ){
+        $tech['cms'][]='Magento';
+    }
+
+
+
+    /* Framework */
+
+    if(
+        preg_match(
+            '/_next\/|__next/i',
+            $content
+        )
+    ){
+        $tech['frameworks'][]='Next.js';
+        $tech['frameworks'][]='React';
+    }
+
+    if(
+        preg_match(
+            '/react-dom|data-reactroot/i',
+            $content
+        )
+    ){
+        $tech['frameworks'][]='React';
+    }
+
+    if(
+        preg_match(
+            '/vue|_nuxt|data-v-/i',
+            $content
+        )
+    ){
+        $tech['frameworks'][]='Vue.js';
+    }
+
+    if(
+        preg_match(
+            '/ng-version|angular/i',
+            $content
+        )
+    ){
+        $tech['frameworks'][]='Angular';
+    }
+
+
+
+    /* Analytics */
+
+    if(
+        preg_match(
+            '/googletagmanager|gtag/i',
+            $content
+        )
+    ){
+        $tech['analytics'][]='Google Analytics';
+    }
+
+    if(
+        preg_match(
+            '/clarity\.ms/i',
+            $content
+        )
+    ){
+        $tech['analytics'][]='Microsoft Clarity';
+    }
+
+    if(
+        preg_match(
+            '/hs-scripts|hsforms|hubspot/i',
+            $content
+        )
+    ){
+        $tech['analytics'][]='HubSpot';
+    }
+
+    if(
+        preg_match(
+            '/googleads|aw-/i',
+            $content
+        )
+    ){
+        $tech['analytics'][]='Google Ads';
+    }
+
+
+
+    /* Backend */
+
+    if(
+        preg_match(
+            '/elementor cloud/i',
+            $content
+        )
+    ){
+        $tech['backend'][]='Elementor Cloud';
+    }
+
+    if(
+        preg_match(
+            '/php|phpsessid|laravel_session/i',
+            $content
+        )
+    ){
+        $tech['backend'][]='PHP';
+    }
+
+
+
+    /* Infrastructure */
+
+    if(
+        preg_match(
+            '/cloudflare|__cf_bm/i',
+            $content
+        )
+    ){
+        $tech['infrastructure'][]='Cloudflare';
+    }
+
+    if(
+        preg_match(
+            '/openresty/i',
+            $content
+        )
+    ){
+        $tech['infrastructure'][]='OpenResty';
+    }
+
+
+
+    /* JS libraries */
+
+    if(str_contains($content,'jquery'))
+        $tech['libraries'][]='jQuery';
+
+    if(str_contains($content,'swiper'))
+        $tech['libraries'][]='Swiper';
+
+    if(str_contains($content,'gsap'))
+        $tech['libraries'][]='GSAP';
+
+
+
+    foreach($tech as $k=>$v){
+        $tech[$k]=array_values(array_unique($v));
+    }
+
+    return $tech;
+}
     private function containsAny(string $content, array $needles): bool
     {
         foreach ($needles as $needle) {

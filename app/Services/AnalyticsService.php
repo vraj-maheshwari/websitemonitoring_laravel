@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Services;
-
 use App\Models\DailyUptimeSummary;
 use App\Models\Site;
 use App\Models\UptimeLog;

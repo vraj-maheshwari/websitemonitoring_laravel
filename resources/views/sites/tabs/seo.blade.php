@@ -4,6 +4,17 @@
     <x-metric-card title="Tracked Keywords" :value="implode(', ', $site->tracked_keywords ?: []) ?: 'None'" />
 </div>
 
+@if($latestSeo)
+    <div class="mb-4">
+        <x-metric-card title="AI Readiness" :value="$latestSeo->ai_score !== null ? $latestSeo->ai_score : 'N/A'" />
+        <div class="mt-3 grid gap-2 md:grid-cols-3 text-sm">
+            <div><p class="text-slate-500">llms.txt</p><p class="font-medium">{{ $latestSeo->llms_exists ? 'Found' : 'Not found' }}</p></div>
+            <div><p class="text-slate-500">GPTBot in robots</p><p class="font-medium">{{ data_get($latestSeo->ai_details,'robots.gptbot') ? 'Allowed' : 'Not detected' }}</p></div>
+            <div><p class="text-slate-500">Docs</p><p class="font-medium">{{ $latestSeo->docs_found ? 'Found' : 'Not found' }}</p></div>
+        </div>
+    </div>
+@endif
+
 @if ($latestSeo)
     @php
         $sig        = $latestSeo->seo_signals ?? [];

@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\DnsLog;
 use App\Models\Site;
-use Illuminate\Support\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -107,7 +107,7 @@ class DnsService
         return $this->applyDnsCheckResult($site, $result, now());
     }
 
-    public function applyDnsCheckResult(Site $site, array $result, Carbon $checkedAt): DnsLog
+    public function applyDnsCheckResult(Site $site, array $result, CarbonInterface  $checkedAt): DnsLog
     {
         $provided = $result;
         $result = array_merge($this->emptyResult(), $result);
@@ -115,6 +115,19 @@ class DnsService
         if (! array_key_exists('dns_score', $provided) || ! array_key_exists('dns_grade', $provided)) {
             [$result['dns_score'], $result['dns_grade']] = $this->scoreDns($result);
         }
+
+        Log::info('DNS DEBUG VALUES', [
+
+    'dns_score'=>$result['dns_score'],
+    'dns_grade'=>$result['dns_grade'],
+    'response_time_ms'=>$result['response_time_ms'],
+    'ttl_min'=>$result['ttl_min'],
+    'ttl_max'=>$result['ttl_max'],
+    'ttl_average'=>$result['ttl_average'],
+    'nameservers'=>$result['nameservers'],
+    'dnssec_enabled'=>$result['dnssec_enabled']
+
+        ]);
 
         $log = DnsLog::create([
             'site_id' => $site->id,

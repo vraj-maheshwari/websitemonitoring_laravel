@@ -351,7 +351,7 @@ class SecurityService
             'security_headers' => $response->headers(),
             'security_status' => $audit['score'] >= 80 ? 'ok' : ($audit['score'] >= 50 ? 'warning' : 'error'),
         ])->save();
-
+        
         Log::info('Security check completed', ['site_id' => $site->id, 'score' => $audit['score'], 'grade' => $audit['grade']]);
 
         $this->monitoring->scheduleNextRun($site, 'security', $checkedAt);

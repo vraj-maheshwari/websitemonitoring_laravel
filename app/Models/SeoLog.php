@@ -22,6 +22,7 @@ class SeoLog extends Model
             'broken_links' => 'array',
             'security_categories' => 'array',
             'security_headers' => 'array',
+            'ai_details' => 'array',
         ];
     }
 

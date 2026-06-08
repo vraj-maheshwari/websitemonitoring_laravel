@@ -17,11 +17,14 @@
     </div>
 </div>
 <div class="bg-white border border-slate-200 rounded-lg p-4">
-    <canvas id="fleet-response-chart" class="block w-full" style="height: 500px;"></canvas>
+    <div id="fleet-response-chart-container">
+        <canvas id="fleet-response-chart" class="block w-full" style="height: 500px;"></canvas>
+    </div>
 </div>
 <script>
 const fleetUrl = '{{ route('api.fleet.analytics') }}';
 const fleetCheckUrl = '{{ route('api.fleet.check') }}';
+const fleetChartContainer = document.getElementById('fleet-response-chart-container');
 let fleetChart = null;
 let liveChecksEnabled = true;
 let isLoading = false;
@@ -44,12 +47,13 @@ async function fetchFleetAndRender() {
     const selected = Array.from(document.querySelectorAll('.fleet-site-toggle:checked'))
         .map(cb => cb.getAttribute('data-site-id'));
 
-    const container = document.getElementById('fleet-response-chart')?.parentElement;
+const container = fleetChartContainer;
+        if (!container) return;
 
     // Nothing selected — clear chart and show prompt
     if (!selected.length) {
         if (fleetChart) { fleetChart.destroy(); fleetChart = null; }
-        if (container) container.innerHTML = '<div class="p-8 text-center text-sm text-slate-500">Select one or more sites above to view their response time.</div>';
+        container.innerHTML = '<div class="p-8 text-center text-sm text-slate-500">Select one or more sites above to view their response time.</div>';
         return;
     }
 

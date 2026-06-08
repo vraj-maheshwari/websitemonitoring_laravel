@@ -2,12 +2,13 @@
 @section('title', $site->name ?: 'Site Detail')
 @section('autoRefresh', true)
 @section('content')
-<div x-data="{ tab: 'overview' }" class="space-y-5">
+<div x-data="{ tab: localStorage.getItem('site-{{ $site->id }}-tab') || 'overview' }" x-init="$watch('tab', val => localStorage.setItem('site-{{ $site->id }}-tab', val))" class="space-y-5">
     <div class="bg-white border rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
         <div><div class="text-sm text-slate-500">{{ $site->url }}</div><x-status-badge :status="$site->app_status" /></div>
         <div class="flex flex-wrap gap-2">
-            @foreach (['uptime','ssl','seo','security','dns','all'] as $type)
-                <form method="POST" action="{{ route('sites.check', $site) }}">@csrf <input type="hidden" name="type" value="{{ $type }}"><button class="rounded-md border px-3 py-2 text-sm">Check {{ ucfirst($type) }}</button></form>
+            @foreach (['uptime','ssl','seo','lighthouse','security','dns','ai','all'] as $type)
+                @php $label = $type === 'ai' ? 'AI Readiness' : ucfirst($type); @endphp
+                <form method="POST" action="{{ route('sites.check', $site) }}">@csrf <input type="hidden" name="type" value="{{ $type }}"><button class="rounded-md border px-3 py-2 text-sm">Check {{ $label }}</button></form>
             @endforeach
         </div>
     </div>

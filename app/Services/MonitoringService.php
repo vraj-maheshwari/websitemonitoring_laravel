@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Site;
 use Illuminate\Support\Carbon;
+use Carbon\CarbonInterface;
 
 class MonitoringService
 {
@@ -68,7 +69,7 @@ class MonitoringService
         return max((int) $site->getAttribute("{$checkType}_interval"), $minimums[$checkType] ?? 3600);
     }
 
-    public function scheduleNextRun(Site $site, string $checkType, Carbon $checkedAt): void
+    public function scheduleNextRun(Site $site, string $checkType, CarbonInterface  $checkedAt): void
     {
         $site->setAttribute("last_{$checkType}_check_at", $checkedAt);
         $site->setAttribute("next_{$checkType}_check_at", $checkedAt->copy()->addSeconds($this->getIntervalSeconds($site, $checkType)));
